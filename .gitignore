@@ -30,3 +30,9 @@
 *.exe
 *.out
 *.app
+
+.vs/
+out/
+CMakeSettings.json
+*.ilk
+*.pdb
