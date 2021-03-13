@@ -6,6 +6,8 @@
 # TODO: Add more platforms...
 if(MSVC)
     set(PLATFORM_STRING "Windows")
+elseif(UNIX)
+    set(PLATFORM_STRING "Linux")
 endif()
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
@@ -15,6 +17,8 @@ elseif(CMAKE_SIZEOF_VOID_P EQUAL 4)
     message(STATUS "CMAKE_SIZEOF_VOID_P == 4: 32-bit build")
     set(PLATFORM_SUFFIX "32")
 endif()
+
+message(STATUS "BearLibTerminal Path: ${PROJECT_SOURCE_DIR}/ext/BearLibTerminal/${PLATFORM_STRING}${PLATFORM_SUFFIX}/")
 
 find_library(BearLibTerminal_LIBRARY 
     NAMES 

@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.10)
+cmake_minimum_required(VERSION 3.12)
 project(potential-carnival CXX)
 
 set_property(GLOBAL PROPERTY CXX_STANDARD 17)
@@ -34,16 +34,24 @@ find_package(Threads REQUIRED)
 link_libraries(${CMAKE_THREAD_LIBS_INIT})
 
 function(set_target_output_directory target)
-    message(STATUS "Setting output directory for ${target} to ${CMAKE_SOURCE_DIR}")
+    message(STATUS "Setting output directory for ${target} to ${CMAKE_SOURCE_DIR}/bin")
     set_target_properties(${target} PROPERTIES
-        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}"
-        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_SOURCE_DIR}"
+        VS_DEBUGGER_WORKING_DIRECTORY "${CMAKE_SOURCE_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_DEBUG "${CMAKE_SOURCE_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_RELEASE "${CMAKE_SOURCE_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_RELWITHDEBINFO "${CMAKE_SOURCE_DIR}/bin"
+        RUNTIME_OUTPUT_DIRECTORY_MINSIZEREL "${CMAKE_SOURCE_DIR}/bin"
     )
 endfunction()
 
+# BearLibTerminal
+# Exists in ext, found through cmake/FindBearLibTerminal.cmake
 find_package(BearLibTerminal REQUIRED)
+
+# asio
+# Exists in ext, defined here as a header-only lib (INTERFACE)
+add_library(asio INTERFACE)
+target_include_directories(asio INTERFACE ${CMAKE_SOURCE_DIR}/ext/asio/include)
+target_compile_definitions(asio INTERFACE _WIN32_WINNT=0x0601)
 
 add_subdirectory(src)

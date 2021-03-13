@@ -3,6 +3,10 @@
 #include <deque>
 #include <chrono>
 #include <array>
+#include <cmath>
+#include <iostream>
+
+#include "asio.hpp"
 
 enum Direction
 {
@@ -94,6 +98,45 @@ struct Move
     Direction facing;
 };
 
+struct socket_t
+{
+    socket_t()
+    : socket(io_context)
+    {
+        socket.open(asio::ip::udp::v4());
+    }
+
+    ~socket_t()
+    {
+        socket.close();
+    }
+
+    void send(std::vector<char> buffer)
+    {
+        auto address = asio::ip::address::from_string("127.0.0.1");
+        asio::ip::udp::endpoint endpoint(address, 4444);
+        socket.send_to(asio::buffer(buffer.data(), buffer.size()), endpoint);
+    }
+
+    void send_heartbeat(Char& ch)
+    {
+        send({ 0x00, 0x00, 0x00, 0x00});
+    }
+
+    void send_register_char(Char& ch)
+    {
+        send({ 0x00, 0x00, 0x01, 0x00});
+    }
+
+    void send_pos_update(Char& ch)
+    {
+        send({ 0x00, 0x00, 0x02, 0x00});
+    }
+
+    asio::io_context io_context;
+    asio::ip::udp::socket socket;
+};
+
 int main()
 {
     // Data
@@ -111,6 +154,9 @@ int main()
 
     Char c{ 10, 10, 0, { WEAPON, "/", "grey" }, { HAT, "^", "red" } };
     std::deque<Move> move_queue;
+
+    // Networking
+    socket_t socket;
 
     bool closing = false;
     while (!closing)
@@ -166,6 +212,8 @@ int main()
         auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
         if (now - last_tick > 400ms)
         {
+            socket.send_heartbeat(c);
+
             last_tick = now;
             ++ticks;
 
@@ -178,6 +226,8 @@ int main()
                 c.x += move.dx;
                 c.y += move.dy;
                 c.facing = move.facing;
+
+                socket.send_pos_update(c);
             }
         }
 
