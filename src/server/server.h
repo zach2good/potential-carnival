@@ -6,7 +6,7 @@
 #include <unordered_map>
 
 #include "blocking_deque.h"
-
+#include "util.h"
 
 struct packet_t
 {
@@ -223,6 +223,10 @@ public:
                 case EVENT_TYPE_IN::PositionUpdate:
                 {
                     std::cout << "PositionUpdate\n";
+                    int x = packet->buffer[7];
+                    int y = packet->buffer[11];
+                    int facing = packet->buffer[12];
+                    std::cout << x << " " << y << " " << facing << "\n";
                     return nullptr;
                 }
                 break;

@@ -9,6 +9,8 @@
 
 #include "asio.hpp"
 
+#include "util.h"
+
 enum Direction
 {
     Right = 0,
@@ -98,23 +100,32 @@ struct Move
     Direction facing;
 };
 
-struct socket_t
+struct connection_to_server_t
 {
-    socket_t(std::string address_str, int port)
+    connection_to_server_t(std::string address, int port)
     : socket(io_context)
-    , endpoint(asio::ip::address::from_string(address_str), port)
+    , endpoint(asio::ip::address::from_string(address), port)
+    , socket_listening(true)
     {
         socket.open(asio::ip::udp::v4());
         socket.non_blocking(true);
+
+        socket_listening_thread = std::thread([&]() {
+            while (socket_listening)
+            {
+                auto reply = listen();
+                if (!reply.empty())
+                {
+                    ++heartbeat;
+                }
+            }
+        });
     }
 
-    ~socket_t()
+    ~connection_to_server_t()
     {
-        close();
-    }
-
-    void close()
-    {
+        socket_listening = false;
+        socket_listening_thread.join();
         socket.close();
     }
 
@@ -125,36 +136,65 @@ struct socket_t
 
     void send_heartbeat(Char& ch)
     {
-        send({ 0x00, 0x00, 0x00, 0x00 });
+        std::vector<char> out;
+
+        std::vector<char> header{ 0x00, 0x00, 0x00, 0x00 };
+        util::append_vecs(out, header);
+
+        send(out);
     }
 
     void send_register_char(Char& ch)
     {
-        send({ 0x00, 0x00, 0x01, 0x00 });
+        std::vector<char> out;
+
+        std::vector<char> header{ 0x00, 0x00, 0x01, 0x00 };
+        util::append_vecs(out, header);
+
+        send(out);
     }
 
     void send_pos_update(Char& ch)
     {
-        send({ 0x00, 0x00, 0x02, 0x00 });
+        std::vector<char> out;
+
+        std::vector<char> header{ 0x00, 0x00, 0x02, 0x00 };
+        util::append_vecs(out, header);
+
+        auto x_parts = util::uint32_to_vec(ch.x);
+        auto y_parts = util::uint32_to_vec(ch.y);
+
+        util::append_vecs(out, x_parts);
+        util::append_vecs(out, y_parts);
+        out.emplace_back((char)ch.facing);
+
+        send(out);
     }
 
     std::vector<char> listen()
     {
         asio::ip::udp::endpoint sender;
-        std::vector<char>       buffer(1024);
-        asio::error_code        error             = asio::error::would_block;
-        std::size_t             bytes_transferred = 0;
+
+        std::vector<char> buffer(1024);
+        asio::error_code  error = asio::error::would_block;
+
+        std::size_t bytes_transferred = 0;
         while (error == asio::error::would_block)
         {
             bytes_transferred = socket.receive_from(asio::buffer(buffer), sender, 0, error);
         }
         buffer.resize(bytes_transferred);
+
         return buffer;
     }
 
     asio::io_context        io_context;
     asio::ip::udp::socket   socket;
     asio::ip::udp::endpoint endpoint;
+
+    std::thread           socket_listening_thread;
+    std::atomic<bool>     socket_listening;
+    std::atomic<uint64_t> heartbeat;
 };
 
 int main()
@@ -178,24 +218,8 @@ int main()
 
     std::deque<Move> move_queue;
 
-    int heartbeat = 0;
-
     // Networking
-    socket_t    socket("127.0.0.1", 4444);
-    bool        socket_listening = true;
-    std::thread socket_thread([&]() {
-        while (socket_listening)
-        {
-            auto reply = socket.listen();
-            if (!reply.empty())
-            {
-                if (reply.size() == 4 && reply[0] + reply[1] + reply[2] + reply[3] == 0)
-                {
-                    ++heartbeat;
-                }
-            }
-        }
-    });
+    connection_to_server_t connection("127.0.0.1", 4444);
 
     bool closing = false;
     while (!closing)
@@ -245,7 +269,7 @@ int main()
                 }
                 break;
                 default:
-                break;
+                    break;
             }
         }
 
@@ -253,7 +277,7 @@ int main()
         auto now = std::chrono::high_resolution_clock::now().time_since_epoch();
         if (now - last_tick > 400ms)
         {
-            socket.send_heartbeat(c);
+            connection.send_heartbeat(c);
 
             last_tick = now;
             ++ticks;
@@ -268,7 +292,7 @@ int main()
                 c.y += move.dy;
                 c.facing = move.facing;
 
-                socket.send_pos_update(c);
+                connection.send_pos_update(c);
             }
         }
 
@@ -317,7 +341,7 @@ int main()
 
         // GUI
         terminal_color(color_from_name("white"));
-        terminal_printf(1, 1, "X: %i, Y: %i, Ticks: %i, q.size(): %i, heartbeat: %i", c.x, c.y, ticks, move_queue.size(), heartbeat);
+        terminal_printf(1, 1, "X: %i, Y: %i, Ticks: %i, q.size(): %i, heartbeat: %i", c.x, c.y, ticks, move_queue.size(), connection.heartbeat.load());
 
         // Submit
         terminal_refresh();
@@ -325,9 +349,6 @@ int main()
         // Sleep
         terminal_delay(1000 / fps);
     }
-    socket_listening = false;
-    socket.close();
-    socket_thread.join();
 
     terminal_close();
 }

@@ -1,5 +1,5 @@
 add_executable(client main.cpp)
-target_link_libraries(client PUBLIC ${BearLibTerminal_LIBRARY} asio)
+target_link_libraries(client PUBLIC ${BearLibTerminal_LIBRARY} asio util)
 target_include_directories(client PUBLIC ${BearLibTerminal_INCLUDE_DIR})
 set_target_output_directory(client)
 
