@@ -9,6 +9,7 @@
 
 #include "asio.hpp"
 
+#include "packet.h"
 #include "util.h"
 
 enum Direction
@@ -35,9 +36,9 @@ struct Item
 
 struct Char
 {
-    int  x;
-    int  y;
-    int  facing;
+    uint32_t x;
+    uint32_t y;
+    uint8_t facing;
     Item weapon;
     Item hat;
 };
@@ -94,9 +95,6 @@ void cast_spell(int x, int y, Direction dir)
 
 struct Move
 {
-    int dx;
-    int dy;
-    // HACK:
     Direction facing;
 };
 
@@ -129,46 +127,37 @@ struct connection_to_server_t
         socket.close();
     }
 
-    void send(std::vector<char> buffer)
+    void send(std::shared_ptr<packet_t>&& packet)
     {
-        socket.send_to(asio::buffer(buffer.data(), buffer.size()), endpoint);
+        socket.send_to(asio::buffer(packet->buffer), endpoint);
     }
 
     void send_heartbeat(Char& ch)
     {
-        std::vector<char> out;
-
-        std::vector<char> header{ 0x00, 0x00, 0x00, 0x00 };
-        util::append_vecs(out, header);
-
-        send(out);
+        auto packet = std::make_shared<packet_t>();
+        send(std::move(packet));
     }
 
     void send_register_char(Char& ch)
     {
-        std::vector<char> out;
-
-        std::vector<char> header{ 0x00, 0x00, 0x01, 0x00 };
-        util::append_vecs(out, header);
-
-        send(out);
+        auto packet = std::make_shared<packet_t>();
+        packet->set_type(0x01);
+        send(std::move(packet));
     }
 
     void send_pos_update(Char& ch)
     {
-        std::vector<char> out;
+        auto packet = std::make_shared<packet_t>();
+        packet->set_type(0x02);
+        packet->position_x() = ch.x;
+        packet->position_y() = ch.y;
+        packet->position_facing() = ch.facing;
 
-        std::vector<char> header{ 0x00, 0x00, 0x02, 0x00 };
-        util::append_vecs(out, header);
+        uint32_t x = packet->position_x();
+        uint32_t y = packet->position_y();
+        uint8_t  f = packet->position_facing();
 
-        auto x_parts = util::uint32_to_vec(ch.x);
-        auto y_parts = util::uint32_to_vec(ch.y);
-
-        util::append_vecs(out, x_parts);
-        util::append_vecs(out, y_parts);
-        out.emplace_back((char)ch.facing);
-
-        send(out);
+        send(std::move(packet));
     }
 
     std::vector<char> listen()
@@ -240,22 +229,22 @@ int main()
             {
                 case TK_W: // Up
                 {
-                    move_queue.push_back({ 0, -1, Up });
+                    move_queue.push_back({ Up });
                 }
                 break;
                 case TK_S: // Down
                 {
-                    move_queue.push_back({ 0, 1, Down });
+                    move_queue.push_back({ Down });
                 }
                 break;
                 case TK_A: // Left
                 {
-                    move_queue.push_back({ -1, 0, Left });
+                    move_queue.push_back({ Left });
                 }
                 break;
                 case TK_D: // Right
                 {
-                    move_queue.push_back({ 1, 0, Right });
+                    move_queue.push_back({ Right });
                 }
                 break;
                 case TK_Q: // Clear move_queue
@@ -288,9 +277,35 @@ int main()
                 auto move = move_queue.front();
                 move_queue.pop_front();
 
-                c.x += move.dx;
-                c.y += move.dy;
+
                 c.facing = move.facing;
+                switch(move.facing)
+                {
+                    case Direction::Right:
+                    {
+                        c.x += 1;
+                        c.y += 0;
+                    }
+                    break;
+                    case Direction::Down:
+                    {
+                        c.x += 0;
+                        c.y += 1;
+                    }
+                    break;
+                    case Direction::Left:
+                    {
+                        c.x += -1;
+                        c.y += 0;
+                    }
+                    break;
+                    case Direction::Up:
+                    {
+                        c.x += 0;
+                        c.y += -1;
+                    }
+                    break;
+                }
 
                 connection.send_pos_update(c);
             }
@@ -320,9 +335,9 @@ int main()
         int starty = c.y;
         for (auto& move : move_queue)
         {
-            startx += move.dx;
-            starty += move.dy;
-            terminal_print(startx, starty, ".");
+            //startx += move.dx;
+            //starty += move.dy;
+            //terminal_print(startx, starty, ".");
         }
 
         // FG Effects (16)

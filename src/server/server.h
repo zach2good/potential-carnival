@@ -6,13 +6,8 @@
 #include <unordered_map>
 
 #include "blocking_deque.h"
+#include "packet.h"
 #include "util.h"
-
-struct packet_t
-{
-    std::vector<char>       buffer = std::vector<char>(1024);
-    asio::ip::udp::endpoint sender_endpoint;
-};
 
 enum class EVENT_TYPE_IN : uint8_t
 {
@@ -110,7 +105,6 @@ public:
         }
         else
         {
-            packet->buffer.resize(bytesRecvd);
             m_rx_deque.emplace_back(std::move(packet));
         }
 
@@ -181,60 +175,41 @@ public:
 
     std::shared_ptr<event_in_t> decode(std::shared_ptr<packet_t>&& packet)
     {
-        auto     address      = packet->sender_endpoint.address();
-        uint32_t address_uint = static_cast<uint32_t>(address.to_v4().to_uint());
-        uint16_t port         = static_cast<uint16_t>(packet->sender_endpoint.port());
+        // Retrieve session using ident key
+        auto session = get_or_create_session(packet->get_full_client_ident());
 
-        if (packet->buffer.size() >= 4)
+        // TODO: Breakout into handlers
+        switch (static_cast<EVENT_TYPE_IN>(packet->get_type()))
         {
-            // 32 bit header
-            uint16_t client_ident = (packet->buffer[0] << 8) + (packet->buffer[1] & 0x00FF);
-            uint8_t  type         = packet->buffer[2];
-            uint8_t  size         = packet->buffer[3];
-
-            // TODO: Validate type vs size
-            //
-
-            // 64 bit ident key
-            // Full ident: client_ident (uint16_t) + address_int (uint32_t) + port (uint16_t)
-            uint64_t full_ident = ((uint64_t)client_ident << 48) + ((uint64_t)address_uint << 32) + (uint64_t)port;
-
-            // Retrieve session using ident key
-            auto session = get_or_create_session(full_ident);
-
-            // TODO: Breakout into handlers
-            switch (static_cast<EVENT_TYPE_IN>(type))
+            case EVENT_TYPE_IN::Heartbeat:
             {
-                case EVENT_TYPE_IN::Heartbeat:
-                {
-                    std::cout << "Heartbeat\n";
-                    m_tx_deque.emplace_back(std::move(packet));
+                std::cout << "Heartbeat\n";
+                m_tx_deque.emplace_back(std::move(packet));
 
-                    // TODO: Make this an event
-                    return nullptr;
-                }
-                    break;
-                case EVENT_TYPE_IN::RegisterCharacter:
-                {
-                    std::cout << "RegisterCharacter\n";
-                    return nullptr;
-                }
-                break;
-                case EVENT_TYPE_IN::PositionUpdate:
-                {
-                    std::cout << "PositionUpdate\n";
-                    int x = packet->buffer[7];
-                    int y = packet->buffer[11];
-                    int facing = packet->buffer[12];
-                    std::cout << x << " " << y << " " << facing << "\n";
-                    return nullptr;
-                }
-                break;
-                default: break;
+                // TODO: Make this an event
+                return nullptr;
             }
+                break;
+            case EVENT_TYPE_IN::RegisterCharacter:
+            {
+                std::cout << "RegisterCharacter\n";
+                return nullptr;
+            }
+            break;
+            case EVENT_TYPE_IN::PositionUpdate:
+            {
+                std::cout << "PositionUpdate\n";
+                auto x = packet->position_x();
+                auto y = packet->position_y();
+                auto f = packet->position_facing();
+                printf("%i, %i, %i\n", x, y, f);
+                return nullptr;
+            }
+            break;
+            default: break;
         }
 
-        std::cout << "Unable to turn packet into event " << address.to_string() << " " << port << "\n";
+        std::cout << "Unable to turn packet into event " << packet->sender_endpoint.address().to_string() << " " << packet->sender_endpoint.port() << "\n";
         return nullptr;
     }
 
