@@ -8,8 +8,9 @@
 #include <thread>
 
 #include "asio.hpp"
-
+#include "blocking_deque.h"
 #include "packet.h"
+#include "udp_port_watcher.h"
 #include "util.h"
 
 enum Direction
@@ -38,7 +39,8 @@ struct Char
 {
     uint32_t x;
     uint32_t y;
-    uint8_t facing;
+    uint8_t  f;
+
     Item weapon;
     Item hat;
 };
@@ -66,7 +68,7 @@ void print_char(Char& c)
 
     // Weapons
     terminal_layer(15);
-    switch (c.facing)
+    switch (c.f)
     {
         case 0: // Right
             terminal_print_ext(c.x, c.y, 0, 0, 0, "[color=grey][offset=16,0]/");
@@ -98,92 +100,79 @@ struct Move
     Direction facing;
 };
 
-struct connection_to_server_t
+class connection_to_server_t : public udp_port_watcher_t
 {
-    connection_to_server_t(std::string address, int port)
-    : socket(io_context)
-    , endpoint(asio::ip::address::from_string(address), port)
-    , socket_listening(true)
+public:
+    connection_to_server_t(const char* address, short port)
+    : udp_port_watcher_t(port + 1)
+    , server_endpoint(asio::ip::address::from_string(address), port)
     {
-        socket.open(asio::ip::udp::v4());
-        socket.non_blocking(true);
-
-        socket_listening_thread = std::thread([&]() {
-            while (socket_listening)
-            {
-                auto reply = listen();
-                if (!reply.empty())
-                {
-                    ++heartbeat;
-                }
-            }
-        });
     }
 
-    ~connection_to_server_t()
+    ~connection_to_server_t() override = default;
+
+    void on_packet_received(std::shared_ptr<packet_t>&& packet) override
     {
-        socket_listening = false;
-        socket_listening_thread.join();
-        socket.close();
+        if (packet->get_type() == LOGIN_REPLY)
+        {
+            auto reply = std::static_pointer_cast<login_reply_packet>(packet);
+            if (reply->success())
+            {
+                ident = reply->ident();
+            }
+        }
+        else if (packet->get_type() == CHAT_MESSAGE)
+        {
+            auto reply = std::static_pointer_cast<chat_message_packet>(packet);
+            chat_messages.emplace_back(reply->message());
+        }
     }
 
     void send(std::shared_ptr<packet_t>&& packet)
     {
-        socket.send_to(asio::buffer(packet->buffer), endpoint);
-    }
-
-    void send_heartbeat(Char& ch)
-    {
-        auto packet = std::make_shared<packet_t>();
-        send(std::move(packet));
-    }
-
-    void send_register_char(Char& ch)
-    {
-        auto packet = std::make_shared<packet_t>();
-        packet->set_type(0x01);
-        send(std::move(packet));
-    }
-
-    void send_pos_update(Char& ch)
-    {
-        auto packet = std::make_shared<packet_t>();
-        packet->set_type(0x02);
-        packet->position_x() = ch.x;
-        packet->position_y() = ch.y;
-        packet->position_facing() = ch.facing;
-
-        uint32_t x = packet->position_x();
-        uint32_t y = packet->position_y();
-        uint8_t  f = packet->position_facing();
-
-        send(std::move(packet));
-    }
-
-    std::vector<char> listen()
-    {
-        asio::ip::udp::endpoint sender;
-
-        std::vector<char> buffer(1024);
-        asio::error_code  error = asio::error::would_block;
-
-        std::size_t bytes_transferred = 0;
-        while (error == asio::error::would_block)
+        if (ident)
         {
-            bytes_transferred = socket.receive_from(asio::buffer(buffer), sender, 0, error);
+            packet->set_client_ident(ident);
         }
-        buffer.resize(bytes_transferred);
-
-        return buffer;
+        packet->sender_endpoint = server_endpoint;
+        m_tx_deque.emplace_back(std::move(packet));
     }
 
-    asio::io_context        io_context;
-    asio::ip::udp::socket   socket;
-    asio::ip::udp::endpoint endpoint;
+    template <typename T, typename... Args>
+    void send(Args&&... args)
+    {
+        auto packet = std::make_shared<T>(std::forward<Args>(args)...);
+        send(std::move(packet));
+    }
 
-    std::thread           socket_listening_thread;
-    std::atomic<bool>     socket_listening;
-    std::atomic<uint64_t> heartbeat;
+    void send_heartbeat(Char& c)
+    {
+        send<heartbeat_ping_packet>();
+    }
+
+    void send_login_request(Char& c)
+    {
+        send<login_request_packet>("Raguza");
+    }
+
+    void send_pos_update(Char& c)
+    {
+        send<position_update_packet>(c.x, c.y, c.f);
+    }
+
+    void send_chat_message(std::string message)
+    {
+        send<chat_message_packet>(message);
+    }
+
+    // Chat
+    util::blocking_deque<std::string> chat_messages;
+
+private:
+    asio::ip::udp::endpoint server_endpoint;
+
+    // Ident + Session tracking
+    uint16_t ident;
 };
 
 int main()
@@ -209,6 +198,16 @@ int main()
 
     // Networking
     connection_to_server_t connection("127.0.0.1", 4444);
+
+    // TODO: State machine
+    // Login -> Download data -> Gameplay
+    connection.send_login_request(c);
+
+    connection.send_chat_message("Hello!");
+    for (int i = 0; i < 10; ++i)
+    {
+        connection.send_chat_message(std::to_string(i));
+    }
 
     bool closing = false;
     while (!closing)
@@ -254,7 +253,7 @@ int main()
                 break;
                 case TK_SPACE: // Spell
                 {
-                    cast_spell(c.x, c.y, (Direction)c.facing);
+                    cast_spell(c.x, c.y, (Direction)c.f);
                 }
                 break;
                 default:
@@ -277,9 +276,8 @@ int main()
                 auto move = move_queue.front();
                 move_queue.pop_front();
 
-
-                c.facing = move.facing;
-                switch(move.facing)
+                c.f = move.facing;
+                switch (move.facing)
                 {
                     case Direction::Right:
                     {
@@ -310,18 +308,6 @@ int main()
                 connection.send_pos_update(c);
             }
         }
-
-        // Handle Rendering
-        /*
-        // World (80 * 25)
-        terminal_layer(2);
-        terminal_color("grey");
-        for (size_t i = 0; i < world.size(); i++)
-        {
-            // HACK: I forget the correct maths for this and can't be bothered to figure it out
-            terminal_print(i % 80, i / 80, ".");
-        }
-        */
 
         // BG Effects
         //
@@ -356,7 +342,16 @@ int main()
 
         // GUI
         terminal_color(color_from_name("white"));
-        terminal_printf(1, 1, "X: %i, Y: %i, Ticks: %i, q.size(): %i, heartbeat: %i", c.x, c.y, ticks, move_queue.size(), connection.heartbeat.load());
+        terminal_printf(1, 1, "X: %i, Y: %i, Ticks: %i, q.size(): %i", c.x, c.y, ticks, move_queue.size());
+
+        auto& messages = connection.chat_messages;
+        std::size_t size = std::min(messages.size(), 5U);
+        for (int i = 0; i < size; ++i)
+        {
+            terminal_color(color_from_argb(255 - (i * 40), 255, 255, 255));
+            auto message = messages.at(messages.size() - 1 - i);
+            terminal_printf(1, 22 - i, "> %s", message.c_str());
+        }
 
         // Submit
         terminal_refresh();

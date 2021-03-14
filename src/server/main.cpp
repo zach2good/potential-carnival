@@ -9,7 +9,7 @@ int main(int argc, char* argv[])
         // Test on commandline with:
         // nc -u localhost 4444
         server serv(4444);
-        while(serv.is_running())
+        while(serv.get_running())
         {
             // Busy loop
         }

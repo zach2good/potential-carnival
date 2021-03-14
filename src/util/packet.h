@@ -1,11 +1,31 @@
 #pragma once
 
+enum PACKET_TYPE
+{
+    // Client -> Server (0 - 49)
+    HEARTBEAT_PING = 0,
+    LOGIN_REQUEST,
+
+    // Server -> Client (50 - 99)
+    HEARTBEAT_PONG = 50,
+    LOGIN_REPLY,
+
+    // Shared (100+)
+    POSITION_UPDATE = 100,
+    CHAT_MESSAGE,
+};
+
 struct packet_t
 {
     // Buffer Data
     // 0 - 3 = Header
+    // 0: Client ident 1
+    // 1: Client ident 2 // TODO: Replace with sequence num
+    // 2: Packet type
+    // 3: Data size
+
     // 4 - 1023 = Body ("Data")
-    std::array<uint8_t, 1024> buffer{{0}};
+    std::array<uint8_t, 1024> buffer{ { 0 } };
 
     template <typename T>
     T& ref(std::size_t index)
@@ -33,12 +53,12 @@ struct packet_t
         ref<uint16_t>(0) = ident;
     }
 
-    uint8_t get_type()
+    PACKET_TYPE get_type()
     {
-        return ref<uint8_t>(2);
+        return static_cast<PACKET_TYPE>(ref<uint8_t>(2));
     }
 
-    void set_type(uint8_t type)
+    void set_type(PACKET_TYPE type)
     {
         ref<uint8_t>(2) = type;
     }
@@ -71,20 +91,102 @@ struct packet_t
 
         return full_ident;
     }
+};
 
-    // TODO: Move these into child classes, inheriting from this
-    uint32_t& position_x()
+struct heartbeat_ping_packet : public packet_t
+{
+    heartbeat_ping_packet()
+    {
+        set_type(HEARTBEAT_PING);
+    }
+};
+
+struct heartbeat_pong_packet : public packet_t
+{
+    heartbeat_pong_packet()
+    {
+        set_type(HEARTBEAT_PONG);
+    }
+};
+
+struct login_request_packet : public packet_t
+{
+    login_request_packet(std::string name)
+    {
+        set_type(LOGIN_REQUEST);
+        ref<uint8_t>(4) = name.size();
+        for (int i = 0; i < name.size(); ++i)
+        {
+            ref<uint8_t>(5 + i) = name[i];
+        }
+    }
+
+    std::string name()
+    {
+        return std::string(buffer.data() + 5, buffer.data() + 5 + ref<uint8_t>(4));
+    }
+};
+
+struct login_reply_packet : public packet_t
+{
+    login_reply_packet(bool success, uint16_t ident)
+    {
+        set_type(LOGIN_REPLY);
+        ref<bool>(4)     = success;
+        ref<uint16_t>(5) = ident;
+    }
+
+    bool& success()
+    {
+        return ref<bool>(4);
+    }
+
+    uint16_t& ident()
+    {
+        return ref<uint16_t>(5);
+    }
+};
+
+struct position_update_packet : public packet_t
+{
+    position_update_packet(uint32_t _x, uint32_t _y, uint8_t _f)
+    {
+        set_type(POSITION_UPDATE);
+        x() = _x;
+        y() = _y;
+        f() = _f;
+    }
+
+    uint32_t& x()
     {
         return ref<uint32_t>(4);
     }
 
-    uint32_t& position_y()
+    uint32_t& y()
     {
         return ref<uint32_t>(8);
     }
 
-    uint8_t& position_facing()
+    uint8_t& f()
     {
         return ref<uint8_t>(12);
+    }
+};
+
+struct chat_message_packet : public packet_t
+{
+    chat_message_packet(std::string message)
+    {
+        set_type(CHAT_MESSAGE);
+        ref<uint8_t>(4) = message.size();
+        for (int i = 0; i < message.size(); ++i)
+        {
+            ref<uint8_t>(5 + i) = message[i];
+        }
+    }
+
+    std::string message()
+    {
+        return std::string(buffer.data() + 5, buffer.data() + 5 + ref<uint8_t>(4));
     }
 };

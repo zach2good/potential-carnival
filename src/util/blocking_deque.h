@@ -1,3 +1,5 @@
+#pragma once
+
 #include <deque>
 #include <mutex>
 
@@ -10,6 +12,12 @@ namespace util
         blocking_deque()
         : m_deque()
         {
+        }
+
+        T& at(std::size_t index)
+        {
+            std::lock_guard<std::mutex> lock(m_mutex);
+            return m_deque.at(index);
         }
 
         std::size_t size()
